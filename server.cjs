@@ -139,7 +139,7 @@ function startVncStack() {
 
   console.log("[VNC] iniciando stack");
 
-    // 1) Xvfb
+      // 1) Xvfb
   xvfbProc = spawn(
     "Xvfb",
     [
@@ -160,18 +160,21 @@ function startVncStack() {
     });
   }
 
-  // ✅ INICIAR AMBIENTE GRÁFICO APÓS Xvfb (CORREÇÃO CANÔNICA)
-  spawn("openbox", [], {
-    env: { ...process.env, DISPLAY: VNC_DISPLAY },
-    stdio: "ignore",
-    detached: true,
-  });
+  // ✅ CORREÇÃO DEFINITIVA:
+  // Aguarda o Xvfb realmente ficar pronto antes de subir apps gráficos
+  setTimeout(() => {
+    spawn("openbox", [], {
+      env: { ...process.env, DISPLAY: VNC_DISPLAY },
+      stdio: "ignore",
+      detached: true,
+    });
 
-  spawn("xterm", [], {
-    env: { ...process.env, DISPLAY: VNC_DISPLAY },
-    stdio: "ignore",
-    detached: true,
-  });
+    spawn("xterm", [], {
+      env: { ...process.env, DISPLAY: VNC_DISPLAY },
+      stdio: "ignore",
+      detached: true,
+    });
+  }, 500);
 
   // 2) x11vnc
   x11vncProc = spawn(
