@@ -337,6 +337,16 @@ function proxyWebSocketToWebsockify(req, clientSocket, head) {
 }
 
 // ======================================================
+// AUTO-START VNC (CANÔNICO PARA FLY)
+// ======================================================
+try {
+  console.log("[BOOT] auto-start VNC");
+  startVncStack();
+} catch (e) {
+  console.error("[BOOT] falha ao iniciar VNC:", e);
+}
+
+// ======================================================
 // LISTEN (HTTP server + upgrade handler)
 // ======================================================
 const PORT = process.env.PORT || "8080";
