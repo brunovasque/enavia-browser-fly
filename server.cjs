@@ -1,7 +1,7 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const { spawn } = require("child_process");
-const path = require("path"); // ✅ FIX CIRÚRGICO — path não estava importado
+const path = require("path");
 const http = require("http");
 const net = require("net");
 const { URL } = require("url");
@@ -11,50 +11,23 @@ console.log("[BOOT] NODE_ENV:", process.env.NODE_ENV);
 console.log("[BOOT] PORT env:", process.env.PORT);
 console.log("[BOOT] PID:", process.pid);
 
-process.on("SIGTERM", () => {
-  console.error("[SIGNAL] SIGTERM recebido — processo sendo finalizado");
-  process.exit(0);
-});
-
-process.on("SIGINT", () => {
-  console.error("[SIGNAL] SIGINT recebido");
-  process.exit(0);
-});
-
-process.on("exit", (code) => {
-  console.error("[EXIT] Processo saindo com code:", code);
-});
+process.on("SIGTERM", () => process.exit(0));
+process.on("SIGINT", () => process.exit(0));
 
 const app = express();
 app.use(bodyParser.json({ limit: "10mb" }));
 
 // ======================================================
-// STATIC FILES (noVNC)
+// noVNC PATH
 // ======================================================
 const NOVNC_PATH = path.resolve(process.cwd(), "public/novnc");
 
-app.use("/novnc", express.static(NOVNC_PATH));
-
-/**
- * ✅ FIX CANÔNICO:
- * O noVNC (vnc.html) estava tentando conectar em wss://HOST:6080/websockify.
- * Como 6080 é interno (não exposto no Fly), isso sempre vai falhar.
- *
- * Aqui nós forçamos o noVNC a:
- * - usar port 443
- * - usar path /novnc/websockify
- *
- * E o proxy WebSocket é feito no "upgrade" do servidor HTTP (abaixo),
- * encaminhando para ws://127.0.0.1:6080 (websockify interno).
- */
-app.get("/novnc", (req, res) => {
+// ======================================================
+// ✅ REDIRECT CANÔNICO DO noVNC (ANTES DO STATIC)
+// ======================================================
+app.get(["/novnc", "/novnc/"], (req, res) => {
   const host = req.hostname;
-
-  // Fly termina TLS e repassa pra nós; usamos x-forwarded-proto quando disponível.
-  const xfProto = req.headers["x-forwarded-proto"];
-  const proto = typeof xfProto === "string" ? xfProto : "https";
-
-  // Para o cliente, a porta pública é 443 (https) ou 80 (http).
+  const proto = req.headers["x-forwarded-proto"] || "https";
   const publicPort = proto === "http" ? 80 : 443;
 
   const qs =
@@ -63,9 +36,13 @@ app.get("/novnc", (req, res) => {
     `&path=${encodeURIComponent("novnc/websockify")}` +
     `&autoconnect=1`;
 
-  // vnc.html fica dentro do /novnc por causa do static acima
   res.redirect(`/novnc/vnc.html?${qs}`);
 });
+
+// ======================================================
+// STATIC FILES (noVNC) — DEPOIS DO REDIRECT
+// ======================================================
+app.use("/novnc", express.static(NOVNC_PATH));
 
 // ======================================================
 // CONFIG VNC
@@ -73,8 +50,6 @@ app.get("/novnc", (req, res) => {
 const ADMIN_TOKEN = process.env.ENAVIA_VNC_ADMIN_TOKEN || "";
 const VNC_PASSWORD = process.env.VNC_PASSWORD || "";
 const VNC_DISPLAY = process.env.VNC_DISPLAY || ":99";
-const VNC_RESOLUTION = process.env.VNC_RESOLUTION || "1280x720";
-const VNC_DEPTH = process.env.VNC_DEPTH || "24";
 const VNC_PORT = Number(process.env.VNC_PORT || 5900);
 const VNC_WS_PORT = Number(process.env.VNC_WS_PORT || 6080);
 
@@ -82,9 +57,6 @@ let xvfbProc = null;
 let x11vncProc = null;
 let websockifyProc = null;
 
-// ======================================================
-// HELPERS
-// ======================================================
 function isRunning(p) {
   return p && p.pid && !p.killed;
 }
@@ -95,249 +67,77 @@ function status() {
       isRunning(xvfbProc) &&
       isRunning(x11vncProc) &&
       isRunning(websockifyProc),
-    display: VNC_DISPLAY,
-    vnc_port: VNC_PORT,
-    ws_port: VNC_WS_PORT,
   };
 }
 
-function killProc(p, name) {
-  if (!p) return;
-  try {
-    console.log("[VNC] encerrando " + name + " pid=" + p.pid);
-    p.kill("SIGTERM");
-  } catch (e) {
-    const msg = e && e.message ? e.message : e;
-    console.error("[VNC] erro ao encerrar " + name + ":", msg);
-  }
-}
-
 function startVncStack() {
-  if (!VNC_PASSWORD) {
-    throw new Error("VNC_PASSWORD não definido");
-  }
+  if (!VNC_PASSWORD) throw new Error("VNC_PASSWORD não definido");
 
-  console.log("[VNC] iniciando stack");
-
-  // 1) Xvfb
-  xvfbProc = spawn(
-    "Xvfb",
-    [
-      VNC_DISPLAY,
-      "-screen",
-      "0",
-      VNC_RESOLUTION + "x" + VNC_DEPTH,
-      "-ac",
-      "-nolisten",
-      "tcp",
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] }
-  );
-
-  if (xvfbProc.stderr) {
-    xvfbProc.stderr.on("data", (d) => {
-      console.log("[Xvfb]", d.toString().trim());
-    });
-  }
-
-  // 2) x11vnc
-  x11vncProc = spawn(
-    "x11vnc",
-    [
-      "-display",
-      VNC_DISPLAY,
-      "-rfbport",
-      String(VNC_PORT),
-      "-passwd",
-      VNC_PASSWORD,
-      "-forever",
-      "-shared",
-      "-noxdamage",
-      "-quiet",
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] }
-  );
-
-  if (x11vncProc.stderr) {
-    x11vncProc.stderr.on("data", (d) => {
-      console.log("[x11vnc]", d.toString().trim());
-    });
-  }
-
-  // 3) websockify
-  websockifyProc = spawn(
-    "websockify",
-    [String(VNC_WS_PORT), "127.0.0.1:" + VNC_PORT],
-    { stdio: ["ignore", "pipe", "pipe"] }
-  );
-
-  if (websockifyProc.stderr) {
-    websockifyProc.stderr.on("data", (d) => {
-      console.log("[websockify]", d.toString().trim());
-    });
-  }
-}
-
-function stopVncStack() {
-  console.log("[VNC] encerrando stack");
-  killProc(websockifyProc, "websockify");
-  killProc(x11vncProc, "x11vnc");
-  killProc(xvfbProc, "Xvfb");
-  websockifyProc = null;
-  x11vncProc = null;
-  xvfbProc = null;
+  xvfbProc = spawn("Xvfb", [VNC_DISPLAY, "-screen", "0", "1280x720x24"]);
+  x11vncProc = spawn("x11vnc", [
+    "-display",
+    VNC_DISPLAY,
+    "-rfbport",
+    String(VNC_PORT),
+    "-passwd",
+    VNC_PASSWORD,
+    "-forever",
+  ]);
+  websockifyProc = spawn("websockify", [
+    String(VNC_WS_PORT),
+    "127.0.0.1:" + VNC_PORT,
+  ]);
 }
 
 // ======================================================
-// AUTH (TEMPORÁRIO)
+// ADMIN
 // ======================================================
 function requireAdmin(req, res) {
-  const token = req.headers["x-enavia-token"];
-  if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
-    res.status(401).json({ ok: false, error: "unauthorized" });
+  if (req.headers["x-enavia-token"] !== ADMIN_TOKEN) {
+    res.status(401).json({ ok: false });
     return false;
   }
   return true;
 }
 
-// ======================================================
-// ROUTES
-// ======================================================
-
-// Root
-app.get("/", (_req, res) => {
-  res.json({ ok: true, service: "ENAVIA_BROWSER_EXECUTOR", mode: "private" });
-});
-
-// Health
-app.get("/health", (_req, res) => {
-  res.json({
-    ok: true,
-    pid: process.pid,
-    uptime: process.uptime(),
-    vnc: status(),
-  });
-});
-
-// ================================
-// ADMIN VNC
-// ================================
 app.post("/_admin/vnc/start", (req, res) => {
   if (!requireAdmin(req, res)) return;
-
-  if (status().running) {
-    res.json(Object.assign({ ok: true, already_running: true }, status()));
-    return;
-  }
-
-  try {
-    console.log("[ADMIN] start VNC solicitado");
-    startVncStack();
-    res.json(Object.assign({ ok: true, started: true }, status()));
-  } catch (e) {
-    console.error("[ADMIN] erro ao iniciar VNC:", e);
-    stopVncStack();
-    res.status(500).json({ ok: false, error: String(e) });
-  }
+  startVncStack();
+  res.json({ ok: true, started: true });
 });
 
-app.post("/_admin/vnc/stop", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  stopVncStack();
-  res.json(Object.assign({ ok: true, stopped: true }, status()));
-});
+// ======================================================
+// ROOT / HEALTH
+// ======================================================
+app.get("/", (_, res) =>
+  res.json({ ok: true, service: "ENAVIA_BROWSER_EXECUTOR" })
+);
 
-// KEEPALIVE
-setInterval(() => {
-  console.log("[KEEPALIVE]", status());
-}, 15000);
+app.get("/health", (_, res) =>
+  res.json({ ok: true, vnc: status() })
+);
 
 // ======================================================
-// ✅ WS PROXY (noVNC → websockify interno)
+// WS PROXY
 // ======================================================
-//
-// O navegador vai abrir: wss://HOST/novnc/websockify (porta 443)
-// Fly termina TLS e entrega pra nós como Upgrade HTTP.
-// Aqui nós fazemos um "TCP tunnel" do Upgrade para 127.0.0.1:6080.
-//
-function proxyWebSocketToWebsockify(req, clientSocket, head) {
-  const targetPort = VNC_WS_PORT; // 6080 (interno)
-  const targetHost = "127.0.0.1";
-
-  // Conecta no websockify interno
-  const upstream = net.connect(targetPort, targetHost, () => {
-    // Reconstroi e encaminha o request original (Upgrade) para o upstream
-    const headers = req.headers || {};
-    const lines = [];
-
-    // Linha inicial
-    lines.push(`${req.method} ${req.url} HTTP/${req.httpVersion}`);
-
-    // Headers
-    for (const [k, v] of Object.entries(headers)) {
-      if (Array.isArray(v)) {
-        for (const vv of v) lines.push(`${k}: ${vv}`);
-      } else if (typeof v !== "undefined") {
-        lines.push(`${k}: ${v}`);
-      }
-    }
-
-    // Final do header
-    lines.push("", "");
-
-    upstream.write(lines.join("\r\n"));
-
-    // Se tiver bytes adicionais (head), repassa
-    if (head && head.length) upstream.write(head);
-
-    // Pipe bidirecional (túnel)
+function proxyWebSocket(req, clientSocket, head) {
+  const upstream = net.connect(VNC_WS_PORT, "127.0.0.1", () => {
     clientSocket.pipe(upstream);
     upstream.pipe(clientSocket);
   });
-
-  upstream.on("error", (err) => {
-    console.error("[WS_PROXY] upstream error:", err && err.message ? err.message : err);
-    try {
-      clientSocket.destroy();
-    } catch (_) {}
-  });
-
-  clientSocket.on("error", (err) => {
-    console.error("[WS_PROXY] client socket error:", err && err.message ? err.message : err);
-    try {
-      upstream.destroy();
-    } catch (_) {}
-  });
 }
-
-// ======================================================
-// LISTEN (HTTP server + upgrade handler)
-// ======================================================
-const PORT = process.env.PORT || "8080";
-console.log("[BOOT] Tentando listen em PORT:", PORT);
 
 const server = http.createServer(app);
 
 server.on("upgrade", (req, socket, head) => {
-  try {
-    const u = new URL(req.url, "http://localhost");
-    const pathname = u.pathname;
-
-    // ✅ Proxy do WS do noVNC
-    if (pathname === "/novnc/websockify") {
-      return proxyWebSocketToWebsockify(req, socket, head);
-    }
-
-    // Se não for nosso endpoint, fecha
-    socket.destroy();
-  } catch (e) {
-    console.error("[WS_PROXY] upgrade handler error:", e);
-    try {
-      socket.destroy();
-    } catch (_) {}
+  const u = new URL(req.url, "http://localhost");
+  if (u.pathname === "/novnc/websockify") {
+    return proxyWebSocket(req, socket, head);
   }
+  socket.destroy();
 });
 
-server.listen(Number(PORT), "0.0.0.0", () => {
-  console.log("[LISTEN] API online em", PORT);
-});
+// ======================================================
+server.listen(process.env.PORT || 8080, "0.0.0.0", () =>
+  console.log("[LISTEN] API online")
+);
