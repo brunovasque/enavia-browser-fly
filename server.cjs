@@ -2,6 +2,9 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const { spawn } = require("child_process");
 const path = require("path"); // ✅ FIX CIRÚRGICO — path não estava importado
+const http = require("http");
+const net = require("net");
+const { URL } = require("url");
 
 console.log("[BOOT] Processo iniciando…");
 console.log("[BOOT] NODE_ENV:", process.env.NODE_ENV);
@@ -32,8 +35,36 @@ const NOVNC_PATH = path.resolve(process.cwd(), "public/novnc");
 
 app.use("/novnc", express.static(NOVNC_PATH));
 
-app.get("/novnc", (_req, res) => {
-  res.sendFile(path.join(NOVNC_PATH, "vnc.html"));
+/**
+ * ✅ FIX CANÔNICO:
+ * O noVNC (vnc.html) estava tentando conectar em wss://HOST:6080/websockify.
+ * Como 6080 é interno (não exposto no Fly), isso sempre vai falhar.
+ *
+ * Aqui nós forçamos o noVNC a:
+ * - usar port 443
+ * - usar path /novnc/websockify
+ *
+ * E o proxy WebSocket é feito no "upgrade" do servidor HTTP (abaixo),
+ * encaminhando para ws://127.0.0.1:6080 (websockify interno).
+ */
+app.get("/novnc", (req, res) => {
+  const host = req.hostname;
+
+  // Fly termina TLS e repassa pra nós; usamos x-forwarded-proto quando disponível.
+  const xfProto = req.headers["x-forwarded-proto"];
+  const proto = typeof xfProto === "string" ? xfProto : "https";
+
+  // Para o cliente, a porta pública é 443 (https) ou 80 (http).
+  const publicPort = proto === "http" ? 80 : 443;
+
+  const qs =
+    `host=${encodeURIComponent(host)}` +
+    `&port=${encodeURIComponent(String(publicPort))}` +
+    `&path=${encodeURIComponent("novnc/websockify")}` +
+    `&autoconnect=1`;
+
+  // vnc.html fica dentro do /novnc por causa do static acima
+  res.redirect(`/novnc/vnc.html?${qs}`);
 });
 
 // ======================================================
@@ -221,10 +252,92 @@ setInterval(() => {
   console.log("[KEEPALIVE]", status());
 }, 15000);
 
-// LISTEN
+// ======================================================
+// ✅ WS PROXY (noVNC → websockify interno)
+// ======================================================
+//
+// O navegador vai abrir: wss://HOST/novnc/websockify (porta 443)
+// Fly termina TLS e entrega pra nós como Upgrade HTTP.
+// Aqui nós fazemos um "TCP tunnel" do Upgrade para 127.0.0.1:6080.
+//
+function proxyWebSocketToWebsockify(req, clientSocket, head) {
+  const targetPort = VNC_WS_PORT; // 6080 (interno)
+  const targetHost = "127.0.0.1";
+
+  // Conecta no websockify interno
+  const upstream = net.connect(targetPort, targetHost, () => {
+    // Reconstroi e encaminha o request original (Upgrade) para o upstream
+    const headers = req.headers || {};
+    const lines = [];
+
+    // Linha inicial
+    lines.push(`${req.method} ${req.url} HTTP/${req.httpVersion}`);
+
+    // Headers
+    for (const [k, v] of Object.entries(headers)) {
+      if (Array.isArray(v)) {
+        for (const vv of v) lines.push(`${k}: ${vv}`);
+      } else if (typeof v !== "undefined") {
+        lines.push(`${k}: ${v}`);
+      }
+    }
+
+    // Final do header
+    lines.push("", "");
+
+    upstream.write(lines.join("\r\n"));
+
+    // Se tiver bytes adicionais (head), repassa
+    if (head && head.length) upstream.write(head);
+
+    // Pipe bidirecional (túnel)
+    clientSocket.pipe(upstream);
+    upstream.pipe(clientSocket);
+  });
+
+  upstream.on("error", (err) => {
+    console.error("[WS_PROXY] upstream error:", err && err.message ? err.message : err);
+    try {
+      clientSocket.destroy();
+    } catch (_) {}
+  });
+
+  clientSocket.on("error", (err) => {
+    console.error("[WS_PROXY] client socket error:", err && err.message ? err.message : err);
+    try {
+      upstream.destroy();
+    } catch (_) {}
+  });
+}
+
+// ======================================================
+// LISTEN (HTTP server + upgrade handler)
+// ======================================================
 const PORT = process.env.PORT || "8080";
 console.log("[BOOT] Tentando listen em PORT:", PORT);
 
-app.listen(Number(PORT), "0.0.0.0", () => {
+const server = http.createServer(app);
+
+server.on("upgrade", (req, socket, head) => {
+  try {
+    const u = new URL(req.url, "http://localhost");
+    const pathname = u.pathname;
+
+    // ✅ Proxy do WS do noVNC
+    if (pathname === "/novnc/websockify") {
+      return proxyWebSocketToWebsockify(req, socket, head);
+    }
+
+    // Se não for nosso endpoint, fecha
+    socket.destroy();
+  } catch (e) {
+    console.error("[WS_PROXY] upgrade handler error:", e);
+    try {
+      socket.destroy();
+    } catch (_) {}
+  }
+});
+
+server.listen(Number(PORT), "0.0.0.0", () => {
   console.log("[LISTEN] API online em", PORT);
 });
