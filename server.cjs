@@ -283,27 +283,55 @@ function proxyWebSocketToWebsockify(req, clientSocket, head) {
   const targetPort = VNC_WS_PORT; // 6080 (interno)
   const targetHost = "127.0.0.1";
 
-  // ✅ MUDANÇA MÍNIMA:
-  // Websockify geralmente espera "/" ou "/websockify".
-  // Se a gente mandar "/novnc/websockify", alguns setups fecham a conexão.
-  // Então reescrevemos o path no request line para "/websockify".
+  // ✅ MUDANÇA MÍNIMA (mas crucial):
+  // - Não repassar "todos" os headers do cliente (isso pode quebrar o websockify).
+  // - Construir um handshake WS mínimo e válido para o upstream.
+  // - Logar a primeira linha da resposta do upstream (pra evidência no fly logs).
   const upstreamPath = "/";
 
+  // Ajuda a evitar latência/fragmentação
+  try {
+    clientSocket.setNoDelay(true);
+  } catch (_) {}
+
   const upstream = net.connect(targetPort, targetHost, () => {
-    const headers = req.headers || {};
+    try {
+      upstream.setNoDelay(true);
+    } catch (_) {}
+
+    const h = req.headers || {};
+
+    // Headers mínimos/seguros para WebSocket handshake
+    const pick = (name) => {
+      const v = h[name];
+      if (Array.isArray(v)) return v.join(", ");
+      if (typeof v === "string") return v;
+      return undefined;
+    };
+
+    const secKey = pick("sec-websocket-key");
+    const secVer = pick("sec-websocket-version") || "13";
+    const secProto = pick("sec-websocket-protocol");
+    const secExt = pick("sec-websocket-extensions");
+    const origin = pick("origin");
+    const ua = pick("user-agent");
+    const cookie = pick("cookie");
+
+    // Linha inicial + headers essenciais
     const lines = [];
+    lines.push(`GET ${upstreamPath} HTTP/${req.httpVersion || "1.1"}`);
+    lines.push(`Host: ${targetHost}:${targetPort}`);
+    lines.push("Upgrade: websocket");
+    lines.push("Connection: Upgrade");
 
-    // Linha inicial (path reescrito)
-    lines.push(`${req.method} ${upstreamPath} HTTP/${req.httpVersion}`);
+    if (secKey) lines.push(`Sec-WebSocket-Key: ${secKey}`);
+    lines.push(`Sec-WebSocket-Version: ${secVer}`);
 
-    // Headers
-    for (const [k, v] of Object.entries(headers)) {
-      if (Array.isArray(v)) {
-        for (const vv of v) lines.push(`${k}: ${vv}`);
-      } else if (typeof v !== "undefined") {
-        lines.push(`${k}: ${v}`);
-      }
-    }
+    if (secProto) lines.push(`Sec-WebSocket-Protocol: ${secProto}`);
+    if (secExt) lines.push(`Sec-WebSocket-Extensions: ${secExt}`);
+    if (origin) lines.push(`Origin: ${origin}`);
+    if (ua) lines.push(`User-Agent: ${ua}`);
+    if (cookie) lines.push(`Cookie: ${cookie}`);
 
     lines.push("", "");
 
@@ -311,8 +339,23 @@ function proxyWebSocketToWebsockify(req, clientSocket, head) {
 
     if (head && head.length) upstream.write(head);
 
+    // A partir daqui é túnel TCP bidirecional
     clientSocket.pipe(upstream);
     upstream.pipe(clientSocket);
+  });
+
+  // Logar primeira linha do upstream (evidência do que o websockify respondeu)
+  let firstLineLogged = false;
+  upstream.on("data", (chunk) => {
+    if (firstLineLogged) return;
+    firstLineLogged = true;
+    try {
+      const s = chunk.toString("utf8", 0, Math.min(chunk.length, 256));
+      const line = s.split("\r\n")[0];
+      console.log("[WS_PROXY] upstream first line:", line);
+    } catch (e) {
+      console.log("[WS_PROXY] upstream first line: <parse-failed>");
+    }
   });
 
   upstream.on("error", (err) => {
@@ -325,11 +368,23 @@ function proxyWebSocketToWebsockify(req, clientSocket, head) {
     } catch (_) {}
   });
 
+  upstream.on("close", () => {
+    try {
+      clientSocket.destroy();
+    } catch (_) {}
+  });
+
   clientSocket.on("error", (err) => {
     console.error(
       "[WS_PROXY] client socket error:",
       err && err.message ? err.message : err
     );
+    try {
+      upstream.destroy();
+    } catch (_) {}
+  });
+
+  clientSocket.on("close", () => {
     try {
       upstream.destroy();
     } catch (_) {}
