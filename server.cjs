@@ -73,6 +73,7 @@ app.get(["/novnc", "/novnc/"], (req, res) => {
     `host=${encodeURIComponent(host)}` +
     `&port=${encodeURIComponent(String(publicPort))}` +
     `&path=${encodeURIComponent("novnc/websockify")}` +
+    `&password=${encodeURIComponent("3487")}` +
     `&autoconnect=1`;
 
   // vnc.html fica dentro do /novnc por causa do static abaixo
@@ -138,7 +139,7 @@ function startVncStack() {
 
   console.log("[VNC] iniciando stack");
 
-  // 1) Xvfb
+    // 1) Xvfb
   xvfbProc = spawn(
     "Xvfb",
     [
@@ -158,6 +159,19 @@ function startVncStack() {
       console.log("[Xvfb]", d.toString().trim());
     });
   }
+
+  // ✅ INICIAR AMBIENTE GRÁFICO APÓS Xvfb (CORREÇÃO CANÔNICA)
+  spawn("openbox", [], {
+    env: { ...process.env, DISPLAY: VNC_DISPLAY },
+    stdio: "ignore",
+    detached: true,
+  });
+
+  spawn("xterm", [], {
+    env: { ...process.env, DISPLAY: VNC_DISPLAY },
+    stdio: "ignore",
+    detached: true,
+  });
 
   // 2) x11vnc
   x11vncProc = spawn(
