@@ -277,7 +277,7 @@ function proxyWebSocketToWebsockify(req, clientSocket, head) {
   // Websockify geralmente espera "/" ou "/websockify".
   // Se a gente mandar "/novnc/websockify", alguns setups fecham a conexão.
   // Então reescrevemos o path no request line para "/websockify".
-  const upstreamPath = "/websockify";
+  const upstreamPath = "/";
 
   const upstream = net.connect(targetPort, targetHost, () => {
     const headers = req.headers || {};
