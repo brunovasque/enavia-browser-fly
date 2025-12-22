@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y \
   x11vnc \
   novnc \
   websockify \
+  openbox \
+  xterm \
   && rm -rf /var/lib/apt/lists/*
 
 # ================================
@@ -29,4 +31,10 @@ COPY . .
 
 EXPOSE 8080 5900 6080
 
-CMD ["node", "server.cjs"]
+# ================================
+# START
+# ================================
+# - openbox cria o desktop
+# - xterm prova visualmente que o X está vivo
+# - node sobe o servidor
+CMD ["bash", "-lc", "openbox & xterm & node server.cjs"]
