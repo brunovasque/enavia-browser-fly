@@ -25,6 +25,11 @@ const app = express();
 app.use(bodyParser.json({ limit: "10mb" }));
 
 // ======================================================
+// STATIC FILES (noVNC)
+// ======================================================
+app.use("/vnc", express.static("public/novnc"));
+
+// ======================================================
 // CONFIG VNC
 // ======================================================
 const ADMIN_TOKEN = process.env.ENAVIA_VNC_ADMIN_TOKEN || "";
@@ -177,7 +182,7 @@ app.get("/health", (_req, res) => {
 });
 
 // ================================
-// 🔥 ENDPOINT PÚBLICO TEMPORÁRIO
+// ADMIN VNC
 // ================================
 app.post("/_admin/vnc/start", (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -216,4 +221,3 @@ console.log("[BOOT] Tentando listen em PORT:", PORT);
 app.listen(Number(PORT), "0.0.0.0", () => {
   console.log("[LISTEN] API online em", PORT);
 });
-
