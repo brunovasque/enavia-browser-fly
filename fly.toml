@@ -1,22 +1,29 @@
-# fly.toml — ENAVIA Browser Executor
-# Configuração canônica para execução via Dockerfile
-
 app = "enavia-browser-fly"
 primary_region = "iad"
 
 [build]
-  dockerfile = "Dockerfile"
 
-[http_service]
+[[services]]
   internal_port = 8080
-  force_https = true
-  auto_stop_machines = "stop"
-  auto_start_machines = true
-  min_machines_running = 0
-  processes = ["app"]
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+[[services]]
+  internal_port = 6080
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 6080
+    handlers = ["tls"]
 
 [[vm]]
   memory = "1gb"
   cpu_kind = "shared"
   cpus = 1
-
