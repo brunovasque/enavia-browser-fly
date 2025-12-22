@@ -3,8 +3,9 @@ primary_region = "iad"
 
 [build]
 
-API HTTP (Express)
-
+# =========================
+# API HTTP (Express)
+# =========================
 [[services]]
   internal_port = 8080
   protocol = "tcp"
@@ -17,8 +18,9 @@ API HTTP (Express)
     port = 443
     handlers = ["tls", "http"]
 
-VNC WebSocket (on-demand)
-
+# =========================
+# VNC WebSocket (on-demand)
+# =========================
 [[services]]
   internal_port = 6080
   protocol = "tcp"
@@ -29,9 +31,9 @@ VNC WebSocket (on-demand)
     port = 6080
     handlers = ["tls"]
 
-
-VM
-
+# =========================
+# VM
+# =========================
 [[vm]]
   memory = "1gb"
   cpu_kind = "shared"
