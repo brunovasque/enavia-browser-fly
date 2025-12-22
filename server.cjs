@@ -50,6 +50,16 @@ const NOVNC_PATH = path.resolve(process.cwd(), "public/novnc");
  * - E precisa capturar /novnc e /novnc/ (barra no fim)
  */
 app.get(["/novnc", "/novnc/"], (req, res) => {
+  // 🔑 GARANTIA: VNC precisa estar ativo antes do browser tentar WS
+  if (!status().running) {
+    try {
+      console.log("[AUTO] iniciando VNC automaticamente");
+      startVncStack();
+    } catch (e) {
+      console.error("[AUTO] falha ao iniciar VNC:", e);
+    }
+  }
+
   const host = req.hostname;
 
   // Fly termina TLS e repassa pra nós; usamos x-forwarded-proto quando disponível.
