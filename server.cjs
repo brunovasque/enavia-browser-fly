@@ -27,10 +27,14 @@ app.use(bodyParser.json({ limit: "10mb" }));
 // ======================================================
 // STATIC FILES (noVNC)
 // ======================================================
-app.use("/vnc", express.static("public/novnc"));
+const __dirnameSafe = __dirname;
 
+// serve tudo que está em public/novnc
+app.use("/novnc", express.static(path.join(__dirnameSafe, "public/novnc")));
+
+// acesso amigável: /novnc → vnc.html
 app.get("/novnc", (_req, res) => {
-  res.redirect("/novnc/vnc.html");
+  res.sendFile(path.join(__dirnameSafe, "public/novnc/vnc.html"));
 });
 
 // ======================================================
