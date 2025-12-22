@@ -1,22 +1,34 @@
-# Playwright LEVE (somente Chromium)
-FROM mcr.microsoft.com/playwright:v1.41.2-jammy
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DISPLAY=:99
+ENV PORT=8080
 
 WORKDIR /app
 
-# Dependências de display + VNC + websocket
+# ================================
+# SYSTEM DEPENDENCIES
+# ================================
 RUN apt-get update && apt-get install -y \
-    xvfb \
-    x11vnc \
-    websockify \
-    && rm -rf /var/lib/apt/lists/*
+  curl \
+  nodejs \
+  npm \
+  xvfb \
+  x11vnc \
+  novnc \
+  websockify \
+  && rm -rf /var/lib/apt/lists/*
 
-# Dependências Node
+# ================================
+# APP FILES
+# ================================
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 
-# Código
 COPY . .
 
-ENV PORT=8080
+EXPOSE 8080 5900 6080
 
-CMD ["node", "src/server.js"]
+CMD ["node", "server.js"]
+
+
