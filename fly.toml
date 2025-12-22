@@ -19,19 +19,6 @@ primary_region = "iad"
     handlers = ["tls", "http"]
 
 # =========================
-# VNC WebSocket (on-demand)
-# =========================
-[[services]]
-  internal_port = 6080
-  protocol = "tcp"
-  auto_start = false
-  auto_stop = false
-
-  [[services.ports]]
-    port = 6080
-    handlers = ["tls"]
-
-# =========================
 # VM
 # =========================
 [[vm]]
