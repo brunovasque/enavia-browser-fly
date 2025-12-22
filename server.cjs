@@ -1,6 +1,7 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const { spawn } = require("child_process");
+const path = require("path"); // ✅ FIX CIRÚRGICO — path não estava importado
 
 console.log("[BOOT] Processo iniciando…");
 console.log("[BOOT] NODE_ENV:", process.env.NODE_ENV);
