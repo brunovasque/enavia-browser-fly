@@ -3,6 +3,8 @@ primary_region = "iad"
 
 [build]
 
+API HTTP (Express)
+
 [[services]]
   internal_port = 8080
   protocol = "tcp"
@@ -15,13 +17,20 @@ primary_region = "iad"
     port = 443
     handlers = ["tls", "http"]
 
+VNC WebSocket (on-demand)
+
 [[services]]
   internal_port = 6080
   protocol = "tcp"
+  auto_start = false
+  auto_stop = false
 
   [[services.ports]]
     port = 6080
     handlers = ["tls"]
+
+
+VM
 
 [[vm]]
   memory = "1gb"
