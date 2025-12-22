@@ -29,6 +29,10 @@ app.use(bodyParser.json({ limit: "10mb" }));
 // ======================================================
 app.use("/vnc", express.static("public/novnc"));
 
+app.get("/novnc", (_req, res) => {
+  res.redirect("/novnc/vnc.html");
+});
+
 // ======================================================
 // CONFIG VNC
 // ======================================================
